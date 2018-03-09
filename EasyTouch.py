@@ -2,7 +2,7 @@
 #_*_ coding:utf-8 _*_
 
 #####################
-#       CoLANct
+#       EasyTouch
 #####################
 #this program works on python2
 
@@ -11,11 +11,10 @@ from frontend import *
 from common import *
 import thread
 
-messager = Messager()
 
-backend = Backend(messager)
+backend = Backend()
 thread.start_new_thread(backend.start, empty_tuple)
-frontend = Frontend(messager)
+frontend = Frontend()
 frontend.start()
 print 'exit'
 

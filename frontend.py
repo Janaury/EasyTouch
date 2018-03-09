@@ -26,6 +26,7 @@ class wxtl(object):
     '''
     该类提供wx下的一些实用的小功能
     '''
+
     @staticmethod
     def GetTextDisplayLen(str):
 
@@ -42,6 +43,19 @@ class wxtl(object):
         text_width, text_height = panel.GetBestSize()
         frame.Destroy()
         return text_width
+
+    @staticmethod
+    def ShowInfo(info):
+        Title = {
+            signal_warning : u'警告',
+            signal_info : u'提示',
+            signal_error : u'错误'
+        }
+
+        level = info[0]
+        content = info[1]
+        title = Title[level]
+        wx.MessageBox(content, title, level)
 
 ###########################################################################
 ## Class messagePanel
@@ -202,41 +216,38 @@ class SettingDialog(wx.Dialog):
         #loading setting from backend
         ##############################
 
-        self.parent = parent
-        messager = parent.messager
-        messager.f2b_signal.put('read_setting')
-        setting = messager.b2f_signal.get()
-        ip = setting['address'][0]
-        port = setting['address'][1]
+        ###########################################################
+        ip = setting['ip']
+        port = setting['port']
         filePath = setting['file_path']
-        nickname = self.parent.nickname
+        nickname = setting['nickname']
+        ###########################################################
+
         self.IP_input.SetValue(ip)
         self.Port_input.SetValue(str(port))
         self.FilePath_input.SetValue(filePath)
         self.Nickname_input.SetValue(nickname)
+
     
     def __del__(self):
             pass
 
     # Virtual event handlers, overide them in your derived class
     def onConfirm(self, event):
-        messager = self.parent.messager
         ip = self.IP_input.GetValue()
         nickname = self.Nickname_input.GetValue()
         port = int(self.Port_input.GetValue())
         filePath = self.FilePath_input.GetValue()
 
-        self.parent.nickname =nickname
-
         newSetting = {
             'address' : (ip, port),
             'file_path' : filePath
         }
-        messager.f2b_signal.put('save_setting')
-        messager.f2b_buff.put(newSetting)
-        result = messager.b2f_signal.get()
-        if result != 'ok':
-            wx.MessageDialog(self, result, u'提示', style = wx.OK).ShowModal()
+        trans.send(bckend_center,(frntend, 'save_setting'))
+        trans.send(bckend_data, newSetting)
+        result = trans.get(bckend_data)
+        if result[0] != signal_ok:
+            wxtl.ShowInfo(result)
         else:
             self.Close()
 
@@ -251,7 +262,7 @@ class SettingDialog(wx.Dialog):
 
 class MainFrame(wx.Frame):
 
-    def __init__(self, parent, messager):
+    def __init__(self, parent):
 
         ###################
         #intial UI
@@ -367,7 +378,7 @@ class MainFrame(wx.Frame):
         # Load front atrributes
         ########################
 
-        self.nickname = u'王小明'
+        self.opposite_id = u'Default'
 
 
         ######################
@@ -396,120 +407,95 @@ class MainFrame(wx.Frame):
         # communication part
         ########################
 
-        self.messager = messager
-        thread.start_new_thread(self.ReceiveMessageHandler, empty_tuple)
-        thread.start_new_thread(self.ReceiveNotice, empty_tuple)
+        thread.start_new_thread(self.ReceiveDataHandler, empty_tuple)
+
 
     def __del__(self):
         pass
 
     # Virtual event handlers, overide them in your derived class
     def onConnect(self, event):
-        self.messager.f2b_signal.put('connect')
-        result = self.messager.b2f_signal.get()
-        if result == 'ok':
-            wx.MessageDialog(self, u'连接已建立', u'提示', style = wx.OK).ShowModal()
+        trans.send(bckend_center, (frntend, 'connect'))
+        result = trans.get(frntend_data)
+        if result[0] == signal_ok:
+            wxtl.ShowInfo((signal_info, u'连接已建立'))
         else:
-            wx.MessageDialog(self, result, u'提示', style = wx.OK).ShowModal()
+            wxtl.ShowInfo(result)
 
     def onDisconnect(self, event):
-        self.messager.f2b_signal.put('disconnect')
-        result = self.messager.b2f_signal.get()
-        if result == 'ok':
-            wx.MessageDialog(self, u'连接已断开', u'提示', style = wx.OK).ShowModal()
+        trans.send(bckend_center, (frntend, 'disconnect'))
+        result = trans.get(frntend_data)
+        if result[0] == signal_ok:
+            wxtl.ShowInfo((signal_info, u'连接已断开'))
         else:
-            wx.MessageDialog(self, result, u'提示', style = wx.OK).ShowModal()
+            wxtl.ShowInfo(result)
 
     def onSetting(self, event):
-        d = SettingDialog(self).ShowModal()
+        SettingDialog(self).ShowModal()
 
     def onClearInput(self, event):
         self.InputArea.SetValue('')
 
-
-    def ReceiveMessageHandler(self):
+    def ReceiveDataHandler(self):
         while True:
-            messageByte = self.messager.b2f_buff.get()
-            messageData = messageByte.decode(encoding='utf-8')
-
-            info('receive ' + messageData)
-
-            thread.start_new_thread(self.UpdateUI,(self.DisplayMessage,messageData, wx.ALIGN_LEFT))
-    def ReceiveNotice(self):
-        while True:
-            notice = self.messager.b2f_notice.get()
-            thread.start_new_thread(self.UpdateUI,(wx.MessageBox, notice , u'提示', wx.ICON_EXCLAMATION))
-
+            data = trans.get(frntend)
+            if data[0] == 'msg':
+                msg = data[1]
+                thread.start_new_thread(self.UpdateUI, (self.DisplayMessage, msg, self.opposite_id, wx.ALIGN_LEFT))
+            elif data[0] == 'nickname':
+                self.opposite_id = data[1]
+            else:
+                thread.start_new_thread(self.UpdateUI, (wxtl.ShowInfo, data))
 
     def onSendMessage(self,event):
 
-        messageData = self.InputArea.GetValue()
-        if messageData != '':
-            self.messager.f2b_signal.put('send')
-            self.messager.f2b_buff.put(messageData.encode(encoding = 'utf-8'))
-            result = self.messager.b2f_signal.get()
-            if result != 'ok':
-                wx.MessageDialog(self, result, u'提示', style = wx.OK).ShowModal()
-                return
-
-            self.DisplayMessage(messageData, wx.ALIGN_RIGHT)
-            self.InputArea.SetValue('')
+        msg = self.InputArea.GetValue()
+        if msg != '':
+            trans.send(bckend_center, (frntend, 'send'))
+            trans.send(bckend_data, msg)
+            result = trans.get(frntend_data)
+            if result[0] == signal_ok:
+                self.DisplayMessage(msg, pos = wx.ALIGN_RIGHT)
+                self.InputArea.SetValue('')
+            else:
+                wxtl.ShowInfo(result)
         else:
-            wx.MessageBox(u'没有待发送的消息', u'提示')
+            wxtl.ShowInfo((signal_info, u'没有待发送的信息'))
 
     def onSendFile(self, event):
         sendFilePath = self.File_picker.GetPath()
 
         wx.MessageBox('努力开发中...','提示')
 
-        if sendFilePath != '':
-            self.messager.f2b_signal.put('send')
-            self.messager.f2b_buff.put(sendFilePath.encode(encoding = 'utf-8'))
-            result = self.messager.b2f_signal.get()
-            if result != 'ok':
-                wx.MessageDialog(self, result, u'提示', style = wx.OK).ShowModal()
-                return
-
-            filename = sendFilePath.split(r'/')[-1]
-            self.DisplayMessage(u'文件:' + filename , wx.ALIGN_RIGHT)
-        else:
-            wx.MessageBox(u'没有选择文件', u'提示')
-
     def onClose(self, event):
-        self.messager.f2b_signal.put('exit')
-        result = self.messager.b2f_signal.get()
-
+        trans.send(bckend_center, (frntend, 'exit'))
+        result = trans.get(frntend_data)
         exit()
 
     def onStopListen(self, event):
-        self.messager.f2b_signal.put('stop_listen')
-        result = self.messager.b2f_signal.get()
-        if result == 'ok':
-            wx.MessageDialog(self, u'监听已停止', u'提示', style = wx.OK).ShowModal()
+        trans.send(bckend_center, (frntend, 'stop_listen'))
+        result = trans.get(frntend_data)
+        if result[0] == signal_ok:
+            wxtl.ShowInfo((signal_info, u'监听已停止'))
         else:
-            wx.MessageDialog(self, result, u'提示', style = wx.OK).ShowModal()
+            wxtl.ShowInfo(result)
 
     def onStartListen(self, event):
-        self.messager.f2b_signal.put('start_listen')
-        result = self.messager.b2f_signal.get()
-        if result == 'ok':
-            wx.MessageDialog(self, u'监听已启动', u'提示', style=wx.OK).ShowModal()
+        trans.send(bckend_center, (frntend, 'start_listen'))
+        result = trans.get(frntend_data)
+        if result[0] == signal_ok:
+            wxtl.ShowInfo((signal_info, u'监听已启动'))
         else:
-            wx.MessageDialog(self, result, u'提示', style=wx.OK).ShowModal()
+            wxtl.ShowInfo(result)
 
 
     #######################
     # common tool methods
     #######################
 
-    def DisplayMessage(self, message, pos = wx.ALIGN_LEFT):
-        '''
-        :param message: 传入需要显示的消息
-        :param pos: 显示在左边或右边
-        :return: 显示消息的panel对象
-        '''
+    def DisplayMessage(self, message, nickname = setting['nickname'], pos = wx.ALIGN_LEFT):
         sizer = self.RecordView.GetSizer()
-        message_panel = messagePanel(self.RecordView, message, nickname=self.nickname)
+        message_panel = messagePanel(self.RecordView, message, nickname = nickname)
         sizer.Add(message_panel, 0, pos | wx.ALL, 10)
         self.Layout()
 
@@ -523,10 +509,10 @@ class MainFrame(wx.Frame):
         wx.CallAfter(method, *arg)
 
 class Frontend(object):
-    def __init__(self, messager):
-        self.messager = messager
+    def __init__(self):
+        pass
     def start(self):
         app = wx.App()
-        mainFrame = MainFrame(None, self.messager)
+        mainFrame = MainFrame(None)
         mainFrame.Show()
         app.MainLoop()
