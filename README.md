@@ -1,5 +1,5 @@
 # EasyTouch
 
-##One sentence introduction
+## One sentence introduction
 
 ​	An instant Messager only used in LAN. 
